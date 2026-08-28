@@ -1,0 +1,212 @@
+services:
+  nginx:
+    build: ./nginx
+    container_name: resilio-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      dashboard:
+        condition: service_started
+      gateway:
+        condition: service_started
+      chaos-engine:
+        condition: service_healthy
+      ai-engine:
+        condition: service_healthy
+    networks:
+      - resilio-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build: ./gateway
+    container_name: resilio-gateway
+    restart: unless-stopped
+    environment:
+      ORDER_SERVICE_URL: http://order-service:8000
+      NODE_OPTIONS: "--max-old-space-size=100"
+      OTEL_SERVICE_NAME: resilio-gateway
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+    depends_on:
+      order-service:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 128M
+    networks:
+      - resilio-net
+
+  order-service:
+    build: ./order-service
+    container_name: resilio-order-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://resilio:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/resilio
+      OTEL_SERVICE_NAME: resilio-order-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_PYTHON_DISABLED_INSTRUMENTATIONS: fastapi
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 128M
+    networks:
+      - resilio-net
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    container_name: resilio-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/otel-collector-config.yaml:ro
+    expose:
+      - "4317"
+      - "4318"
+      - "8889"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: 32M
+    networks:
+      - resilio-net
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: resilio-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      otel-collector:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 128M
+    networks:
+      - resilio-net
+
+  chaos-engine:
+    build: ./chaos-engine
+    container_name: resilio-chaos-engine
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 128M
+    networks:
+      - resilio-net
+
+  ai-engine:
+    build: ./ai-engine
+    container_name: resilio-ai-engine
+    restart: unless-stopped
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      prometheus:
+        condition: service_started
+      chaos-engine:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 128M
+    networks:
+      - resilio-net
+
+  dashboard:
+    build: ./dashboard
+    container_name: resilio-dashboard
+    restart: unless-stopped
+    depends_on:
+      ai-engine:
+        condition: service_healthy
+      chaos-engine:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: 64M
+    networks:
+      - resilio-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: resilio-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: resilio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: resilio
+    command: ["postgres", "-c", "shared_buffers=64MB", "-c", "max_connections=50"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resilio -d resilio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+    networks:
+      - resilio-net
+
+volumes:
+  postgres-data:
+  prometheus-data:
+
+networks:
+  resilio-net:
+    name: resilio-net
+    driver: bridge

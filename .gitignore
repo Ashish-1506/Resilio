@@ -1,0 +1,32 @@
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+
+# JavaScript dependencies and build output
+node_modules/
+**/node_modules/
+dashboard/dist/
+**/.vite/
+
+# Python caches and local environments
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local logs and runtime output
+*.log
+logs/
+
+# IDE and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local Docker and database artifacts
+*.pid
+postgres-data/
+prometheus-data/
