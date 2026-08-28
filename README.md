@@ -6,6 +6,10 @@ Resilio is a containerized reliability platform for diagnosing and recovering fr
 
 When a dependency becomes slow or unavailable, Resilio correlates latency, 5xx rates, container state, and recent logs. It then publishes a live incident event and produces either a Gemini-backed diagnosis or a transparent local heuristic diagnosis when an external AI key is unavailable.
 
+## Dashboard Preview
+
+![Resilio dashboard showing live service health, telemetry charts, chaos controls, and the AI incident feed](assets/dashboard.png)
+
 ## Architecture
 
 ```mermaid
@@ -231,3 +235,7 @@ Request traffic
 ```
 
 The important design property is that diagnosis is grounded in observable system state: metrics, container status, and recent logs are collected at incident time rather than fabricated in the UI.
+
+## Ownership
+
+Designed, built, and maintained by **Ashish**.
